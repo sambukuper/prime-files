@@ -100,10 +100,9 @@ struct Slot {
 pub enum Picture {
     /// The picture at that size.
     Shown(Arc<RenderImage>),
-    /// Still being made. The preview waits for it rather than scaling a
-    /// smaller size up: a smaller picture drawn at the pane's size is the
-    /// blocky preview the owner kept seeing.
-    Waiting,
+    /// Still being made; a smaller size of it, when one is held, to show
+    /// meanwhile.
+    Waiting(Option<Arc<RenderImage>>),
     /// The Shell has no picture of it — a format Windows has no codec for.
     Unavailable,
 }
@@ -279,25 +278,29 @@ impl Thumbnails {
     /// preview: like [`Self::get`], but saying when the Shell has no picture,
     /// where `get` would hand over the type's icon in its place.
     pub fn picture(&mut self, path: &str, size: u32, cx: &mut Context<ExplorerPane>) -> Picture {
-        // `get` starts the request; the picture it hands back (a smaller size,
-        // or the type's icon) is deliberately not used here.
-        let _ = self.get(path, size, cx);
-        self.picture_of(path, size)
+        let held = self.get(path, size, cx);
+        self.picture_of(path, size, held)
     }
 
-    // What `picture` answers.
-    fn picture_of(&self, path: &str, size: u32) -> Picture {
+    // What `picture` answers, given what `get` handed over.
+    fn picture_of(&self, path: &str, size: u32, held: Option<Arc<RenderImage>>) -> Picture {
         let Some(slot) = self
             .entries
             .get(path)
             .and_then(|slots| slots.iter().find(|slot| slot.kind == Kind::Thumbnail && slot.size == size))
         else {
-            return Picture::Waiting;
+            return Picture::Waiting(held);
         };
         match &slot.entry {
             Entry::Ready(image) if slot.settled => Picture::Shown(image.clone()),
             Entry::Ready(_) | Entry::Failed => Picture::Unavailable,
-            Entry::Loading { .. } => Picture::Waiting,
+            // A smaller size is shown meanwhile only if it is the picture: a
+            // stand-in would flash the icon before the photo.
+            Entry::Loading { .. } => Picture::Waiting(held.filter(|_| {
+                self.entries[path]
+                    .iter()
+                    .any(|slot| slot.kind == Kind::Thumbnail && slot.size < size && slot.settled)
+            })),
         }
     }
 
@@ -770,16 +773,16 @@ mod tests {
             let mut cache = Thumbnails::default();
             cache.entries.insert("foto.webp".into(), vec![slot(Kind::Thumbnail, 1024, loading(), 0)]);
             cache.loading = 1;
-            assert!(matches!(cache.picture_of("foto.webp", 1024), Picture::Waiting));
+            assert!(matches!(cache.picture_of("foto.webp", 1024, None), Picture::Waiting(None)));
 
             let icon = image(64);
             cache.arrived("foto.webp", Kind::Thumbnail, 1024, Answer { image: Some(icon.clone()), settled: false }, cx);
-            assert!(matches!(cache.picture_of("foto.webp", 1024), Picture::Unavailable));
+            assert!(matches!(cache.picture_of("foto.webp", 1024, Some(icon.clone())), Picture::Unavailable));
             let slot = &mut cache.entries.get_mut("foto.webp").unwrap()[0];
             slot.retry_at = None;
             slot.retries = RETRIES;
             assert!(
-                matches!(cache.picture_of("foto.webp", 1024), Picture::Unavailable),
+                matches!(cache.picture_of("foto.webp", 1024, Some(icon.clone())), Picture::Unavailable),
                 "past the retries the icon stays Ready, and is still not the picture"
             );
 
@@ -787,16 +790,20 @@ mod tests {
             cache.entries.insert("foto.jpg".into(), vec![slot_of(Kind::Thumbnail, 1024, loading())]);
             cache.loading += 1;
             cache.arrived("foto.jpg", Kind::Thumbnail, 1024, Answer { image: Some(photo.clone()), settled: true }, cx);
-            assert!(matches!(cache.picture_of("foto.jpg", 1024), Picture::Shown(shown) if Arc::ptr_eq(&shown, &photo)));
+            assert!(matches!(cache.picture_of("foto.jpg", 1024, None), Picture::Shown(shown) if Arc::ptr_eq(&shown, &photo)));
 
-            // While a bigger size is made the preview waits: a smaller,
-            // settled picture of the same file is not scaled up into a
-            // blocky preview.
+            // While a bigger size is made, a smaller picture of the same file
+            // shows; a smaller stand-in does not.
             let tile = image(64);
-            let mut small = slot_of(Kind::Thumbnail, 256, Entry::Ready(tile));
+            let mut small = slot_of(Kind::Thumbnail, 256, Entry::Ready(tile.clone()));
             small.settled = true;
             cache.entries.insert("grande.jpg".into(), vec![small, slot_of(Kind::Thumbnail, 2048, loading())]);
-            assert!(matches!(cache.picture_of("grande.jpg", 2048), Picture::Waiting));
+            assert!(matches!(
+                cache.picture_of("grande.jpg", 2048, Some(tile.clone())),
+                Picture::Waiting(Some(shown)) if Arc::ptr_eq(&shown, &tile)
+            ));
+            cache.entries.get_mut("grande.jpg").unwrap()[0].settled = false;
+            assert!(matches!(cache.picture_of("grande.jpg", 2048, Some(tile)), Picture::Waiting(None)));
         });
     }
 
