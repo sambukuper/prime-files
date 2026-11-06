@@ -231,6 +231,15 @@ pub struct ExplorerPane {
     /// The image in the preview decoded from its file at the panel's size
     /// (`picture.rs`), replacing the Shell's lower-quality thumbnail.
     pub(crate) preview_sharp: Option<super::view::preview::SharpPicture>,
+    /// Fitted decodes of the photos next to the active one, kept so that
+    /// arrowing onto one of them draws it at once instead of waiting for its
+    /// decode. Keyed by path, with the edge each was decoded at.
+    pub(crate) preview_prefetched:
+        std::collections::HashMap<String, (u32, std::sync::Arc<gpui::RenderImage>)>,
+    /// The panel size `preview_prefetched` was decoded for; a resize drops it.
+    pub(crate) preview_prefetch_edge: u32,
+    /// Paths whose prefetch decode is running, so each is asked for once.
+    pub(crate) preview_prefetching: std::collections::HashSet<String>,
     /// The 3D model in the preview, turned by dragging.
     pub(crate) preview_model: Option<super::model3d::ModelPreview>,
     /// What the preview showed before an item of a folder listing was
@@ -576,6 +585,9 @@ impl ExplorerPane {
             terminal_shown: false,
             preview_pdf_bounds: Default::default(),
             preview_sharp: None,
+            preview_prefetched: std::collections::HashMap::new(),
+            preview_prefetch_edge: 0,
+            preview_prefetching: std::collections::HashSet::new(),
             preview_model: None,
             preview_back: Vec::new(),
             preview_zoom: 1.0,

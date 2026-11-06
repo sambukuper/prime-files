@@ -106,6 +106,110 @@ pub(crate) fn warm_sharp_picture(
     let _ = sharp_picture(page, path, edge, cx);
 }
 
+/// How many decoded photos are kept ahead of the active one. Each is the
+/// panel's size, so this is a few rows of arrowing through a folder; a whole
+/// folder would be hundreds of megabytes.
+const PREFETCH_CAP: usize = 6;
+
+/// Whether `path` is a photo the fitted preview decodes itself, and so one
+/// worth decoding ahead: the raster formats WIC reads. A GIF is drawn frame
+/// by frame and an SVG is not a WIC raster, so neither is prefetched.
+fn prefetchable_image(path: &str) -> bool {
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "bmp" | "webp")
+}
+
+/// The photos next to `row` in `entries`, nearest first, wrapping like the
+/// arrows do, so a folder's ends prefetch each other.
+fn neighbours_to_prefetch(entries: &[nohrs_services::fs::listing::FileEntryDto], row: usize) -> Vec<String> {
+    let len = entries.len();
+    if len < 2 {
+        return Vec::new();
+    }
+    let mut wanted = Vec::new();
+    for delta in [1isize, -1, 2, -2] {
+        let index = (row as isize + delta).rem_euclid(len as isize) as usize;
+        let Some(entry) = entries.get(index) else {
+            continue;
+        };
+        if entry.kind == "file" && prefetchable_image(&entry.path) {
+            wanted.push(entry.path.clone());
+        }
+    }
+    wanted
+}
+
+/// Decodes the photos around `path` in the background, so arrowing onto one
+/// of them draws it on the first frame instead of waiting for its decode. The
+/// kept decodes live on the pane, keyed by path, and are dropped when the
+/// panel is resized or the cap is passed.
+pub(crate) fn prefetch_neighbours(
+    page: &mut ExplorerPane,
+    path: &str,
+    edge: u32,
+    cx: &mut Context<ExplorerPane>,
+) {
+    // A new panel size makes every kept decode the wrong size.
+    if page.preview_prefetch_edge != edge {
+        page.preview_prefetch_edge = edge;
+        for (_, (_, image)) in page.preview_prefetched.drain() {
+            cx.drop_image(image, None);
+        }
+        page.preview_prefetching.clear();
+    }
+    let Some(row) = page.filtered_entries.iter().position(|entry| entry.path == path) else {
+        return;
+    };
+    for neighbour in neighbours_to_prefetch(&page.filtered_entries, row) {
+        // Holding an arrow key walks the whole folder; this keeps the decodes
+        // running to the few rows around where the keys are.
+        if page.preview_prefetching.len() >= PREFETCH_CAP {
+            break;
+        }
+        if page.preview_prefetched.contains_key(&neighbour)
+            || !page.preview_prefetching.insert(neighbour.clone())
+        {
+            continue;
+        }
+        // Room for the new one: a kept decode goes, texture and all.
+        if page.preview_prefetched.len() >= PREFETCH_CAP
+            && let Some(oldest) = page.preview_prefetched.keys().next().cloned()
+            && let Some((_, image)) = page.preview_prefetched.remove(&oldest)
+        {
+            cx.drop_image(image, None);
+        }
+        let decode = cx.background_spawn({
+            let neighbour = neighbour.clone();
+            async move { crate::explorer::picture::decode_fitted(&neighbour, edge) }
+        });
+        cx.spawn(async move |this: gpui::WeakEntity<ExplorerPane>, cx| {
+            let decoded = decode.await;
+            this.update(cx, |pane, cx| {
+                pane.preview_prefetching.remove(&neighbour);
+                let Ok((width, height, pixels)) = decoded else {
+                    return;
+                };
+                let Some(image) = crate::explorer::thumbnails::render_image(width, height, pixels) else {
+                    return;
+                };
+                // The panel may have been resized while this decoded.
+                if pane.preview_prefetch_edge != edge {
+                    cx.drop_image(std::sync::Arc::new(image), None);
+                    return;
+                }
+                pane.preview_prefetched
+                    .insert(neighbour, (edge, std::sync::Arc::new(image)));
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
 /// The preview's image decoded from its file (`explorer/picture.rs`): for
 /// which file and size, and the picture once it is made (`None` while it is,
 /// or when the file could not be decoded).
@@ -135,6 +239,27 @@ fn sharp_picture(
         && sharp.edge == edge
     {
         return sharp.image.clone().or_else(|| sharp.previous.clone());
+    }
+    // A photo the prefetch already decoded: show it now, with no wait.
+    if let Some((cached_edge, image)) = page.preview_prefetched.remove(path) {
+        if cached_edge == edge {
+            let previous = page
+                .preview_sharp
+                .take()
+                .filter(|sharp| sharp.path == path)
+                .and_then(|sharp| sharp.image.or(sharp.previous));
+            page.preview_sharp = Some(SharpPicture {
+                path: path.to_string(),
+                edge,
+                image: Some(image.clone()),
+                failed: false,
+                previous,
+                _decode: None,
+            });
+            return Some(image);
+        }
+        // Decoded for a size the panel no longer shows.
+        cx.drop_image(image, None);
     }
     let decode = cx.background_spawn({
         let path = path.to_string();
@@ -1644,5 +1769,51 @@ mod zoom_anchor_tests {
         assert_eq!(corner, point(px(-400.0), px(-300.0)));
         let back = anchored_offset(point(px(-400.0), px(-300.0)), view, point(px(0.0), px(0.0)), 2.0, 1.0);
         assert_eq!(back, point(px(0.0), px(0.0)));
+    }
+}
+
+#[cfg(test)]
+mod prefetch_tests {
+    use super::{neighbours_to_prefetch, prefetchable_image};
+    use nohrs_services::fs::listing::FileEntryDto;
+
+    fn entry(path: &str, kind: &str) -> FileEntryDto {
+        FileEntryDto {
+            name: path.rsplit('/').next().unwrap_or(path).to_string(),
+            path: path.to_string(),
+            kind: kind.to_string(),
+            size: 0,
+            modified: 0,
+        }
+    }
+
+    // The photos next to a row are asked for nearest first, wrapping at the
+    // ends; folders, text and formats the fitted preview does not decode are
+    // left alone.
+    #[test]
+    fn neighbours_are_the_photos_around_the_row() {
+        let entries = vec![
+            entry("/f/a.png", "file"),
+            entry("/f/b.txt", "file"),
+            entry("/f/c.jpg", "file"),
+            entry("/f/d", "dir"),
+            entry("/f/e.webp", "file"),
+            entry("/f/f.gif", "file"),
+        ];
+        assert_eq!(neighbours_to_prefetch(&entries, 2), vec!["/f/e.webp", "/f/a.png"]);
+        // Wrapping: the last photo's neighbours are the first ones.
+        assert_eq!(neighbours_to_prefetch(&entries, 4), vec!["/f/a.png", "/f/c.jpg"]);
+        // A single row has nothing to prefetch.
+        assert_eq!(neighbours_to_prefetch(&entries[..1], 0), Vec::<String>::new());
+    }
+
+    #[test]
+    fn only_the_formats_the_fitted_preview_decodes() {
+        for path in ["a.png", "a.JPG", "a.jpeg", "a.bmp", "a.webp"] {
+            assert!(prefetchable_image(path), "{path}");
+        }
+        for path in ["a.gif", "a.svg", "a.txt", "a.mp4", "a"] {
+            assert!(!prefetchable_image(path), "{path}");
+        }
     }
 }
