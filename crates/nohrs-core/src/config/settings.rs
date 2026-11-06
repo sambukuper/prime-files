@@ -140,6 +140,8 @@ pub struct Ui {
     /// How smoothly the mouse wheel scrolls the listing, 0..=100: 0 moves
     /// in steps, 100 glides for longest.
     pub scroll_smoothness: u32,
+    /// Whether stepping past one end of a listing continues from the other.
+    pub infinite_scroll: bool,
     /// Whether sound files show their waveform instead of their icon in the
     /// icons view.
     pub audio_waveforms: bool,
@@ -163,6 +165,7 @@ impl Default for Ui {
             icon_pack: "default".to_string(),
             name_lines: 0,
             scroll_smoothness: 50,
+            infinite_scroll: true,
             audio_waveforms: false,
             preview_autoplay: false,
             welcome_done: false,
@@ -1047,6 +1050,15 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             ))),
         }
     }
+    if let Some(value) = table.get("infinite_scroll") {
+        match value.as_bool() {
+            Some(flag) => ui.infinite_scroll = flag,
+            None => diagnostics.push(Diagnostic::warn(format!(
+                "invalid ui.infinite_scroll {value}; using {}",
+                ui.infinite_scroll
+            ))),
+        }
+    }
     if let Some(value) = table.get("audio_waveforms") {
         match value.as_bool() {
             Some(flag) => ui.audio_waveforms = flag,
@@ -1102,6 +1114,7 @@ fn read_ui(table: &toml::Table, ui: &mut Ui, diagnostics: &mut Vec<Diagnostic>) 
             "icon_pack",
             "name_lines",
             "scroll_smoothness",
+            "infinite_scroll",
             "audio_waveforms",
             "preview_autoplay",
             "hover_audio",

@@ -63,9 +63,21 @@ pub(crate) fn fitted_picture(
                 .into_any_element(),
         );
     }
+    // The sharp decode is either still running or it failed. The Shell's
+    // cached picture (Windows keeps it as a low-quality JPEG) must not cover
+    // the panel while the real decode is on its way: that is the blocky
+    // picture the owner kept seeing. An empty frame waits for the decode;
+    // only a decode that failed falls back to the Shell's picture.
+    let decode_failed = page.preview_sharp.as_ref().is_some_and(|sharp| {
+        sharp.path == image_path && sharp.edge == edge && sharp.failed
+    });
+    if !decode_failed {
+        page.gif_cache = None;
+        return Some(div().size_full().into_any_element());
+    }
     let shown = match page.thumbnails.picture(image_path, edge, cx) {
         crate::explorer::thumbnails::Picture::Shown(image) => Some(image),
-        crate::explorer::thumbnails::Picture::Waiting(meanwhile) => meanwhile,
+        crate::explorer::thumbnails::Picture::Waiting => None,
         crate::explorer::thumbnails::Picture::Unavailable => return None,
     };
     // Back to fitted after a zoom: the whole decode that the zoom needed is
@@ -82,6 +94,18 @@ pub(crate) fn fitted_picture(
     })
 }
 
+/// Starts the fitted decode as soon as an image becomes the active preview.
+/// Rendering can then use the completed result on its first frame instead of
+/// waiting for the preview classifier to finish.
+pub(crate) fn warm_sharp_picture(
+    page: &mut ExplorerPane,
+    path: &str,
+    edge: u32,
+    cx: &mut Context<ExplorerPane>,
+) {
+    let _ = sharp_picture(page, path, edge, cx);
+}
+
 /// The preview's image decoded from its file (`explorer/picture.rs`): for
 /// which file and size, and the picture once it is made (`None` while it is,
 /// or when the file could not be decoded).
@@ -89,6 +113,9 @@ pub(crate) struct SharpPicture {
     path: String,
     edge: u32,
     image: Option<std::sync::Arc<gpui::RenderImage>>,
+    // Whether the decode finished without a picture, so the preview knows it
+    // may show the Shell's instead of waiting forever.
+    failed: bool,
     // The same file's picture at the size asked before, shown until this one
     // is made, so resizing the panel never falls back to the Shell's.
     previous: Option<std::sync::Arc<gpui::RenderImage>>,
@@ -123,9 +150,13 @@ fn sharp_picture(
             match decoded {
                 Ok((width, height, pixels)) => {
                     sharp.image = crate::explorer::thumbnails::render_image(width, height, pixels).map(std::sync::Arc::new);
+                    sharp.failed = sharp.image.is_none();
                 }
                 // The Shell's picture stays, as before.
-                Err(error) => tracing::debug!("could not decode {wanted} for the preview: {error}"),
+                Err(error) => {
+                    tracing::debug!("could not decode {wanted} for the preview: {error}");
+                    sharp.failed = true;
+                }
             }
             sharp._decode = None;
             cx.notify();
@@ -142,6 +173,7 @@ fn sharp_picture(
         path: path.to_string(),
         edge,
         image: None,
+        failed: false,
         previous: previous.clone(),
         _decode: Some(task),
     });

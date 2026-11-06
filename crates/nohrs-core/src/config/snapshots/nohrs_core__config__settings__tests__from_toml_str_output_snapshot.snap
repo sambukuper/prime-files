@@ -17,6 +17,7 @@ expression: parsed
             icon_pack: "default",
             name_lines: 0,
             scroll_smoothness: 50,
+            infinite_scroll: true,
             audio_waveforms: false,
             preview_autoplay: false,
             welcome_done: false,

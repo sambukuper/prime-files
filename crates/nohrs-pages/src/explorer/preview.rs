@@ -436,6 +436,9 @@ impl ExplorerPane {
             f32::from(window.viewport_size().height),
             window.scale_factor(),
         );
+        if is_binary_image_path(&path) {
+            super::view::preview::warm_sharp_picture(self, &path, edge, cx);
+        }
         let read_task = cx.background_spawn({
             let path = path.clone();
             async move { read_preview(&path, show_hidden, edge) }

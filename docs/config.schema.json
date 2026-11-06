@@ -485,6 +485,11 @@
           "description": "Identifier of the icon pack used to render entries.",
           "type": "string"
         },
+        "infinite_scroll": {
+          "default": true,
+          "description": "Whether stepping past one end of a listing continues from the other.",
+          "type": "boolean"
+        },
         "language": {
           "default": "auto",
           "description": "Interface language: `\"auto\"` follows the Windows regional format\n(then the country), or one of `\"pt-BR\"`, `\"en\"`, `\"es\"`, `\"fr\"`, `\"de\"`,\n`\"it\"`, `\"ru\"`, `\"ja\"`, `\"zh-CN\"`, `\"ar\"`.",
@@ -670,6 +675,7 @@
         "hover_audio": true,
         "hover_audio_delay_ms": 400,
         "icon_pack": "default",
+        "infinite_scroll": true,
         "language": "auto",
         "name_lines": 0,
         "preview_autoplay": false,

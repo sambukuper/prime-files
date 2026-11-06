@@ -1239,6 +1239,12 @@ impl SettingsPage {
             )
             .reset(("ui", "show_hidden"), !ui.show_hidden, "false"),
             Row::hint(
+                t!("Rolagem contínua"),
+                t!("Ao chegar ao fim da lista, continua do começo."),
+                self.switch("infinite-scroll", ui.infinite_scroll, ("ui", "infinite_scroll"), cx),
+            )
+            .reset(("ui", "infinite_scroll"), ui.infinite_scroll, "true"),
+            Row::hint(
                 t!("Ordenação padrão"),
                 t!("Como cada pasta é ordenada ao abrir."),
                 self.config_choice(

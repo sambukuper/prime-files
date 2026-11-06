@@ -81,6 +81,11 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Ajustar todas as colunas ao conteúdo", "Size all columns to fit", "Ajustar todas las columnas al contenido"),
     ("Animação", "Animation", "Animación"),
     ("Ano passado", "Last year", "El año pasado"),
+    (
+        "Ao chegar ao fim da lista, continua do começo.",
+        "Reaching the end of the list continues from the beginning.",
+        "Al llegar al final de la lista, continúa desde el principio.",
+    ),
     ("Aparência", "Appearance", "Apariencia"),
     ("Aperte as teclas…", "Press the keys…", "Pulsa las teclas…"),
     (
@@ -601,6 +606,7 @@ pub(super) static STRINGS: &[(&str, &str, &str)] = &[
     ("Renomear", "Rename", "Cambiar nombre"),
     ("Restaurar padrão", "Restore defaults", "Restaurar valores predeterminados"),
     ("Restaurar todos", "Restore all", "Restaurar todos"),
+    ("Rolagem contínua", "Continuous scrolling", "Desplazamiento continuo"),
     ("Rolagem suave", "Smooth scrolling", "Desplazamiento suave"),
     ("Rosa", "Pink", "Rosa"),
     ("Roxo", "Purple", "Morado"),

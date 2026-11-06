@@ -555,6 +555,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
         ],
     ),
     (
+        "Ao chegar ao fim da lista, continua do começo.",
+        [
+            "Arrivé à la fin de la liste, on continue depuis le début.",
+            "Am Ende der Liste geht es am Anfang weiter.",
+            "Arrivati alla fine dell'elenco si continua dall'inizio.",
+            "Дойдя до конца списка, прокрутка продолжается с начала.",
+            "リストの末尾に達すると先頭から続きます。",
+            "到达列表末尾后会从开头继续。",
+        ],
+    ),
+    (
         "Aparência",
         [
             "Apparence",
@@ -3368,6 +3379,17 @@ pub(super) static EXTRA: &[(&str, [&str; 6])] = &[
             "Восстановить все",
             "すべて元に戻す",
             "全部恢复",
+        ],
+    ),
+    (
+        "Rolagem contínua",
+        [
+            "Défilement continu",
+            "Fortlaufendes Scrollen",
+            "Scorrimento continuo",
+            "Непрерывная прокрутка",
+            "連続スクロール",
+            "连续滚动",
         ],
     ),
     (
